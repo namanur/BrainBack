@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Brainback</string>
+    <string name="accessibility_service_description">Brainback monitors YouTube to block Shorts and protect your focus.</string>
+</resources>

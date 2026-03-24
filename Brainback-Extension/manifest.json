@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Brainback: YouTube De-clutter",
+  "version": "1.0",
+  "description": "An attention firewall for your browser. Removes Shorts and distracting recommendations from YouTube.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
