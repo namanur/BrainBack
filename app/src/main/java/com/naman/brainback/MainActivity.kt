@@ -1,12 +1,9 @@
 package com.naman.brainback
 
-import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.os.Process
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,7 +19,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,21 +40,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var statsManager: StatsManager
     private lateinit var frictionManager: FrictionManager
+    private lateinit var validator: LockValidator
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         statsManager = StatsManager(this)
         frictionManager = FrictionManager(this)
+        validator = LockValidator(this)
         
         setContent {
             BrainbackTheme {
-                DashboardScreen()
+                MainNavigation()
             }
         }
     }
@@ -73,47 +73,38 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    @Composable
+    fun MainNavigation() {
+        var currentScreen by remember { mutableStateOf("dashboard") }
+        
+        when (currentScreen) {
+            "dashboard" -> DashboardScreen(onNavigateToPreflight = { currentScreen = "preflight" })
+            "preflight" -> PreflightScreen(onBack = { currentScreen = "dashboard" })
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun DashboardScreen() {
-        val isServiceEnabled = isAccessibilityServiceEnabled()
+    fun DashboardScreen(onNavigateToPreflight: () -> Unit) {
         val prefs = getSharedPreferences("brainback_stats", Context.MODE_PRIVATE)
         val monitoredBrowsers = remember { getMonitoredBrowsers() }
 
         var showMenu by remember { mutableStateOf(false) }
-        var showPrivacyDialog by remember { mutableStateOf(false) }
-        var showAIDialog by remember { mutableStateOf(false) }
-        var showLockWarning by remember { mutableStateOf(false) } // NEW: Warning Dialog State
-        var unlockInput by remember { mutableStateOf("") }
-
-        // State-driven lock tracking
         var remainingMillis by remember { mutableStateOf(frictionManager.getRemainingMillis()) }
         var isLocked by remember { mutableStateOf(frictionManager.isLocked()) }
-        var activeQuote by remember { mutableStateOf(frictionManager.getQuoteIfExpired()) }
+        var isOnBreak by remember { mutableStateOf(frictionManager.isOnBreak()) }
+        var expiredQuote by remember { mutableStateOf(frictionManager.getQuoteIfExpired()) }
+        var unlockInput by remember { mutableStateOf("") }
 
-        LaunchedEffect(isLocked, activeQuote) {
-            while (frictionManager.isLocked()) {
+        LaunchedEffect(isLocked, isOnBreak) {
+            while (frictionManager.getRemainingMillis() > 0) {
                 delay(1000)
                 remainingMillis = frictionManager.getRemainingMillis()
             }
-            // Transition to Quote phase once timer ends
-            isLocked = false
-            activeQuote = frictionManager.getQuoteIfExpired()
+            isLocked = frictionManager.isLocked()
+            isOnBreak = frictionManager.isOnBreak()
+            expiredQuote = frictionManager.getQuoteIfExpired()
         }
-
-        val totalBlocks = prefs.getInt("total_blocks", 0)
-        
-        val appUsageList = listOf(
-            AppUsage("YouTube", prefs.getInt("block_count_com.google.android.youtube", 0), Color.White),
-            AppUsage("Instagram", prefs.getInt("block_count_com.instagram.android", 0), Color(0xFFBBBBBB)),
-            AppUsage("Snapchat", prefs.getInt("block_count_com.snapchat.android", 0), Color(0xFF888888))
-        ).filter { it.blocks > 0 }
-
-        var browserBlockTotal = 0
-        monitoredBrowsers.forEach { pkg -> browserBlockTotal += prefs.getInt("block_count_$pkg", 0) }
-        val finalUsageList = if (browserBlockTotal > 0) {
-            appUsageList + AppUsage("Browsers", browserBlockTotal, Color(0xFF444444))
-        } else appUsageList
 
         Scaffold(
             topBar = {
@@ -130,8 +121,7 @@ class MainActivity : ComponentActivity() {
                     actions = {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, contentDescription = "Menu", tint = Color.White) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(Color(0xFF111111))) {
-                            DropdownMenuItem(text = { Text("Trust & Power", color = Color.White) }, onClick = { showMenu = false; showPrivacyDialog = true })
-                            DropdownMenuItem(text = { Text("Share & AI", color = Color.White) }, onClick = { showMenu = false; showAIDialog = true })
+                            DropdownMenuItem(text = { Text("Transparency", color = Color.White) }, onClick = { showMenu = false; onNavigateToPreflight() })
                         }
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Black)
@@ -142,177 +132,121 @@ class MainActivity : ComponentActivity() {
             Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp).verticalScroll(rememberScrollState())) {
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // STATUS CARD (PRE-BREAK PROTOCOL)
+                // VALIDATED STATUS CARD
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
                 ) {
                     Column(modifier = Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            if (isServiceEnabled) "SYSTEM PROTECTED" else "PROTECTION OFF",
-                            color = if (isServiceEnabled) Color.White else Color(0xFFBBBBBB),
-                            fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        
-                        if (isLocked) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin, fontFamily = FontFamily.Monospace)
-                                Text("PRE-BREAK COOLDOWN", color = Color(0xFF888888), fontSize = 9.sp, letterSpacing = 1.sp)
-                            }
-                        } else if (activeQuote != null) {
-                            // ENFORCED TYPING CHALLENGE (Anti-Cheat)
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("INTENT CHALLENGE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    "Type this quote exactly to unlock:", 
-                                    color = Color(0xFF888888), 
-                                    fontSize = 10.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                // Removed SelectionContainer to prevent copy-paste
-                                Text(
-                                    activeQuote!!, 
-                                    color = Color.White, 
-                                    fontSize = 16.sp, 
-                                    fontWeight = FontWeight.Light, 
-                                    fontFamily = FontFamily.Serif,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                )
-                                Spacer(modifier = Modifier.height(20.dp))
-                                OutlinedTextField(
-                                    value = unlockInput,
-                                    onValueChange = { unlockInput = it },
-                                    label = { Text("Manual Entry Required", fontSize = 10.sp) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
-                                    shape = RoundedCornerShape(12.dp)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(
-                                    onClick = { 
-                                        if (frictionManager.unlock(unlockInput)) { 
-                                            activeQuote = null
-                                            unlockInput = "" 
-                                        } 
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) { Text("VERIFY INTENT") }
-                            }
+                        if (isOnBreak) {
+                            Text("BREAK WINDOW ACTIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin)
+                            Text("FIREWALL IS TEMPORARILY OFF", color = Color(0xFF444444), fontSize = 9.sp)
+                        } else if (isLocked) {
+                            Text("COOLDOWN ACTIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin)
+                            Text("SYSTEM HARD-LOCKED", color = Color(0xFFB06161), fontSize = 9.sp)
+                        } else if (expiredQuote != null) {
+                            Text("COOLDOWN COMPLETE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(expiredQuote!!, color = Color.White, fontSize = 16.sp, fontFamily = FontFamily.Serif, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp))
+                            OutlinedTextField(value = unlockInput, onValueChange = { unlockInput = it }, label = { Text("Type quote perfectly") }, modifier = Modifier.fillMaxWidth())
+                            Button(onClick = { if (frictionManager.unlock(unlockInput)) unlockInput = "" }, modifier = Modifier.padding(top = 12.dp)) { Text("TAKE BREAK") }
                         } else {
+                            Text("SYSTEM ARMED", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Spacer(modifier = Modifier.height(20.dp))
+                            // THE GATEKEEPER TRIGGER
                             Button(
-                                onClick = { showLockWarning = true }, // Trigger Warning Pop-up
+                                onClick = { onNavigateToPreflight() },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                                shape = RoundedCornerShape(32.dp),
-                                modifier = Modifier.fillMaxWidth().height(56.dp)
-                            ) { Text("REQUEST BREAK (30M)", fontWeight = FontWeight.Bold) }
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("REQUEST UNLOCK")
+                            }
                         }
                     }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    MonochromeStat("SAVED", totalBlocks.toString(), Modifier.weight(1f))
+                    MonochromeStat("SAVED", prefs.getInt("total_blocks", 0).toString(), Modifier.weight(1f))
                     Spacer(modifier = Modifier.width(16.dp))
-                    MonochromeStat("TOTAL USAGE", formatMillis(statsManager.getTotalScreenTimeToday()), Modifier.weight(1f).clickable {
-                        val intent = Intent().apply {
-                            setClassName("com.google.android.apps.wellbeing", "com.google.android.apps.wellbeing.settings.TopLevelSettingsActivity")
-                        }
-                        try { startActivity(intent) }
-                        catch (e: Exception) { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-                    })
-                }
-                
-                if (finalUsageList.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(56.dp))
-                    Text("DISTRACTION LOG", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
-                        Box(modifier = Modifier.size(180.dp), contentAlignment = Alignment.Center) {
-                            MonochromeCinematicPie(finalUsageList)
-                        }
-                    }
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        finalUsageList.forEach { app ->
-                            MonochromeBar(app.label, app.blocks, app.color)
-                        }
-                    }
+                    MonochromeStat("USAGE", formatMillis(statsManager.getTotalScreenTimeToday()), Modifier.weight(1f))
                 }
                 
                 Spacer(modifier = Modifier.height(80.dp))
                 Row(modifier = Modifier.align(Alignment.CenterHorizontally).alpha(0.3f), verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(16.dp).clip(CircleShape)) {
-                        Image(painter = painterResource(id = R.drawable.logo), contentDescription = null, modifier = Modifier.size(24.dp), contentScale = ContentScale.Crop)
-                    }
+                    Box(modifier = Modifier.size(16.dp).clip(CircleShape)) { Image(painter = painterResource(id = R.drawable.logo), contentDescription = null, modifier = Modifier.size(24.dp), contentScale = ContentScale.Crop) }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Be back in your brain.", color = Color.White, fontSize = 11.sp, letterSpacing = 1.sp, fontFamily = FontFamily.Serif)
                 }
-                Spacer(modifier = Modifier.height(40.dp))
             }
         }
+    }
 
-        // PRE-LOCK WARNING DIALOG (Transparency Layer)
-        if (showLockWarning) {
-            AlertDialog(
-                onDismissRequest = { showLockWarning = false },
-                containerColor = Color(0xFF111111),
-                shape = RoundedCornerShape(24.dp),
-                title = { Text("Commit to Focus?", color = Color.White) },
-                text = { 
-                    Text(
-                        "You are about to enter a 30-minute lock. The 'Manage' button will disappear. You cannot turn off the firewall until the timer ends AND you manually type a focus quote. Are you sure?",
-                        color = Color(0xFFBBBBBB)
-                    ) 
+    @Composable
+    fun PreflightScreen(onBack: () -> Unit) {
+        val isAccessibilityOk = validator.hasAccessibilityService()
+        val isStatsOk = validator.hasUsageStatsPermission()
+        val isOverlayOk = validator.canDrawOverlays()
+        val isSystemReady = validator.isSystemReady()
+
+        Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(28.dp).verticalScroll(rememberScrollState())) {
+            Text("Pre-Lock Validation", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 32.dp))
+            Text("The system must be fully validated before a lock can be executed.", color = Color.Gray, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(32.dp))
+
+            PreflightItem("Accessibility", "Used to detect Shorts.", isAccessibilityOk) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            PreflightItem("Usage Stats", "Used to track progress.", isStatsOk) {
+                startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            }
+            PreflightItem("Overlays", "Used for self-preservation.", isOverlayOk) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+
+            Spacer(modifier = Modifier.height(48.dp))
+
+            // HARD ENFORCEMENT: COMMIT IS DISABLED UNTIL READY
+            Button(
+                onClick = { 
+                    frictionManager.startLock(30)
+                    onBack() 
                 },
-                confirmButton = {
-                    Button(
-                        onClick = { 
-                            showLockWarning = false
-                            frictionManager.startLock(30)
-                            isLocked = true 
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
-                    ) { Text("I COMMIT") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showLockWarning = false }) { Text("CANCEL", color = Color.White) }
-                }
-            )
-        }
-
-        // Other Dialogs
-        if (showAIDialog) {
-            AlertDialog(onDismissRequest = { showAIDialog = false }, containerColor = Color(0xFF111111), shape = RoundedCornerShape(24.dp),
-                title = { Text("Share & AI Analysis", color = Color.White) },
-                text = { Text("Brainback generates a local JSON file. You are in control of your data.", color = Color(0xFFBBBBBB)) },
-                confirmButton = {
-                    Button(onClick = { showAIDialog = false; shareDataWithAI(totalBlocks, finalUsageList) }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) { Text("SHARE") }
-                }
-            )
-        }
-
-        if (showPrivacyDialog) {
-            AlertDialog(onDismissRequest = { showPrivacyDialog = false }, containerColor = Color(0xFF111111), shape = RoundedCornerShape(24.dp),
-                title = { Text("TRUST & POWER", color = Color.White) },
-                text = { Text("100% LOCAL: Your data never leaves this device.", color = Color(0xFFBBBBBB)) },
-                confirmButton = { TextButton(onClick = { showPrivacyDialog = false }) { Text("OK", color = Color.White) } }
-            )
+                enabled = isSystemReady,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Text(if (isSystemReady) "COMMIT TO 30M LOCK" else "SYSTEM NOT VALIDATED")
+            }
+            
+            TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 16.dp)) {
+                Text("CANCEL", color = Color.Gray)
+            }
         }
     }
 
-    data class AppUsage(val label: String, val blocks: Int, val color: Color)
-
-    private fun getMonitoredBrowsers(): List<String> {
-        val knownMonitored = listOf("com.android.chrome", "com.brave.browser", "org.mozilla.firefox")
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
-        return packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-            .map { it.activityInfo.packageName }
-            .filter { knownMonitored.contains(it) }.distinct()
+    @Composable
+    fun PreflightItem(name: String, desc: String, ok: Boolean, onFix: () -> Unit) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
+            modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth()
+        ) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (ok) Icons.Default.CheckCircle else Icons.Default.Warning, contentDescription = null, tint = if (ok) Color.Green else Color.Red)
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(name, color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(desc, color = Color.Gray, fontSize = 11.sp)
+                }
+                if (!ok) {
+                    TextButton(onClick = onFix) { Text("FIX", color = Color.White) }
+                }
+            }
+        }
     }
+
+    private fun getMonitoredBrowsers(): List<String> = listOf("com.android.chrome", "com.brave.browser", "org.mozilla.firefox")
 
     @Composable
     fun MonochromeStat(label: String, value: String, modifier: Modifier = Modifier) {
@@ -339,11 +273,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MonochromeCinematicPie(usageList: List<AppUsage>) {
         val total = usageList.sumOf { it.blocks }.toFloat().coerceAtLeast(1f)
-        val rotation by rememberInfiniteTransition().animateFloat(
-            initialValue = 0f, targetValue = 360f,
-            animationSpec = infiniteRepeatable(animation = tween(40000, easing = LinearEasing), repeatMode = RepeatMode.Restart),
-            label = "Rotation"
-        )
+        val rotation by rememberInfiniteTransition().animateFloat(initialValue = 0f, targetValue = 360f, animationSpec = infiniteRepeatable(animation = tween(40000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "Rotation")
         Canvas(modifier = Modifier.size(180.dp).rotate(rotation)) {
             var currentStartAngle = 0f
             usageList.forEach { app ->
@@ -352,22 +282,6 @@ class MainActivity : ComponentActivity() {
                 currentStartAngle += sweep
             }
         }
-    }
-
-    private fun shareDataWithAI(total: Int, usageList: List<AppUsage>) {
-        val json = JSONObject().apply {
-            put("brand", "Brainback")
-            put("stats", JSONObject().apply {
-                put("total_interventions", total)
-                usageList.forEach { put(it.label.lowercase(), it.blocks) }
-                put("uptime", formatMillis(statsManager.getTotalScreenTimeToday()))
-            })
-        }
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, json.toString(4))
-        }
-        startActivity(Intent.createChooser(intent, "ANALYZE"))
     }
 
     private fun formatMillis(millis: Long): String {
@@ -387,4 +301,12 @@ class MainActivity : ComponentActivity() {
         val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
         return enabledServices.contains(expectedService)
     }
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
+    }
 }
+
+data class AppUsage(val label: String, val blocks: Int, val color: Color)

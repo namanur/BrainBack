@@ -21,128 +21,81 @@ class BlockerService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: return
         val root = rootInActiveWindow ?: return
 
-        // SELF-PRESERVATION LOGIC
-        if (pkg == "com.android.settings" && frictionManager.isLocked()) {
-            if (hasNodeByText(root, "Brainback")) {
-                Log.d("Brainback", "Self-preservation triggered — blocking settings access")
-                performGlobalAction(GLOBAL_ACTION_BACK)
-                root.recycle()
-                return
+        // FORTRESS HARDENING: Extreme Self-Defense during Lock
+        if (frictionManager.isLocked()) {
+            val isSystemSettings = pkg.contains("settings")
+            val isInstaller = pkg.contains("packageinstaller") || pkg.contains("installer")
+
+            if (isSystemSettings || isInstaller) {
+                // If we are in settings or installer AND "Brainback" is visible, block it immediately.
+                if (hasNodeByText(root, "Brainback")) {
+                    Log.d("Brainback", "Fortress: Blocking access to $pkg to prevent bypass.")
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    root.recycle()
+                    return
+                }
             }
         }
 
-        when {
-            pkg == "com.google.android.youtube" -> {
-                if (isShortsView(root)) {
-                    executeImmediateBlock(pkg)
-                }
-            }
-            pkg == "com.instagram.android" -> {
-                if (isInstagramReels(root)) {
-                    executeImmediateBlock(pkg)
-                }
-            }
-            pkg == "com.snapchat.android" -> {
-                if (isSnapchatSpotlight(root)) {
-                    executeImmediateBlock(pkg)
-                }
-            }
-            isKnownBrowser(pkg) -> {
-                if (isBrowserShorts(root, pkg)) {
-                    executeImmediateBlock(pkg)
-                }
+        // Standard Firewall Logic (only if NOT on break)
+        if (!frictionManager.isOnBreak()) {
+            when {
+                pkg == "com.google.android.youtube" -> if (isShortsView(root)) executeBlock(pkg)
+                pkg == "com.instagram.android" -> if (isInstagramReels(root)) executeBlock(pkg)
+                pkg == "com.snapchat.android" -> if (isSnapchatSpotlight(root)) executeBlock(pkg)
+                isKnownBrowser(pkg) -> if (isBrowserShorts(root, pkg)) executeBlock(pkg)
             }
         }
 
         root.recycle()
     }
 
-    private fun executeImmediateBlock(pkg: String) {
-        Log.d("Brainback", "Short-form detected in $pkg — immediate block")
+    private fun executeBlock(pkg: String) {
         incrementBlockCount(pkg)
         performGlobalAction(GLOBAL_ACTION_BACK)
     }
 
     private fun incrementBlockCount(pkg: String) {
         val prefs = getSharedPreferences("brainback_stats", Context.MODE_PRIVATE)
-        val currentCount = prefs.getInt("block_count_$pkg", 0)
-        prefs.edit().putInt("block_count_$pkg", currentCount + 1).apply()
-        
-        val totalBlocks = prefs.getInt("total_blocks", 0)
-        prefs.edit().putInt("total_blocks", totalBlocks + 1).apply()
+        prefs.edit().putInt("block_count_$pkg", prefs.getInt("block_count_$pkg", 0) + 1).apply()
+        prefs.edit().putInt("total_blocks", prefs.getInt("total_blocks", 0) + 1).apply()
     }
 
-    private fun isKnownBrowser(pkg: String): Boolean {
-        return listOf(
-            "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary",
-            "com.brave.browser", "org.mozilla.firefox", "org.mozilla.focus",
-            "com.opera.browser", "com.microsoft.emmx", "com.sec.android.app.sbrowser",
-            "com.vivaldi.browser"
-        ).contains(pkg)
-    }
+    private fun isKnownBrowser(pkg: String): Boolean = listOf("com.android.chrome", "com.brave.browser", "org.mozilla.firefox").contains(pkg)
 
     private fun isShortsView(root: AccessibilityNodeInfo): Boolean {
-        val shortsViewIds = listOf(
-            "com.google.android.youtube:id/reel_player_fragment_container",
-            "com.google.android.youtube:id/reel_recycler",
-            "com.google.android.youtube:id/shorts_player_view"
-        )
-        return hasNodeByAnyId(root, shortsViewIds)
+        val ids = listOf("com.google.android.youtube:id/reel_player_fragment_container", "com.google.android.youtube:id/reel_recycler", "com.google.android.youtube:id/shorts_player_view")
+        return hasNodeByAnyId(root, ids)
     }
 
     private fun isInstagramReels(root: AccessibilityNodeInfo): Boolean {
-        val reelsIds = listOf(
-            "com.instagram.android:id/reels_video_container",
-            "com.instagram.android:id/clips_video_container"
-        )
-        return hasNodeByAnyId(root, reelsIds) || hasNodeByText(root, "Reels")
+        val ids = listOf("com.instagram.android:id/reels_video_container", "com.instagram.android:id/clips_video_container")
+        return hasNodeByAnyId(root, ids) || hasNodeByText(root, "Reels")
     }
 
     private fun isSnapchatSpotlight(root: AccessibilityNodeInfo): Boolean {
-        // Spotlight typically has a "Spotlight" label or specific vertical pager IDs
-        val spotlightIds = listOf(
-            "com.snapchat.android:id/spotlight_tab_container",
-            "com.snapchat.android:id/spotlight_vertical_pager"
-        )
-        // We look for "Spotlight" text but must ensure it's not just the bottom navigation tab label
-        return hasNodeByAnyId(root, spotlightIds) || (hasNodeByText(root, "Spotlight") && !hasNodeByText(root, "Chat"))
+        val ids = listOf("com.snapchat.android:id/spotlight_tab_container", "com.snapchat.android:id/spotlight_vertical_pager")
+        return hasNodeByAnyId(root, ids) || (hasNodeByText(root, "Spotlight") && !hasNodeByText(root, "Chat"))
     }
 
     private fun isBrowserShorts(root: AccessibilityNodeInfo, pkg: String): Boolean {
-        val urlBarIds = listOf(
-            "com.android.chrome:id/url_bar",
-            "com.brave.browser:id/url_bar",
-            "org.mozilla.firefox:id/url_bar_title",
-            "com.opera.browser:id/url_field",
-            "com.microsoft.emmx:id/url_bar",
-            "com.sec.android.app.sbrowser:id/location_bar_edit_text",
-            "com.vivaldi.browser:id/url_bar"
-        )
-
+        val urlBarIds = listOf("com.android.chrome:id/url_bar", "com.brave.browser:id/url_bar", "org.mozilla.firefox:id/url_bar_title")
         for (id in urlBarIds) {
             val nodes = root.findAccessibilityNodeInfosByViewId(id)
             if (!nodes.isNullOrEmpty()) {
                 val url = nodes[0].text?.toString()?.lowercase() ?: ""
-                if (url.contains("/shorts") || url.contains("/reels")) {
-                    return true
-                }
+                if (url.contains("/shorts") || url.contains("/reels")) return true
             }
         }
         return false
     }
 
     private fun hasNodeByAnyId(root: AccessibilityNodeInfo, ids: List<String>): Boolean {
-        for (id in ids) {
-            val nodes = root.findAccessibilityNodeInfosByViewId(id)
-            if (!nodes.isNullOrEmpty()) return true
-        }
+        for (id in ids) if (!root.findAccessibilityNodeInfosByViewId(id).isNullOrEmpty()) return true
         return false
     }
 
-    private fun hasNodeByText(root: AccessibilityNodeInfo, text: String): Boolean {
-        val nodes = root.findAccessibilityNodeInfosByText(text)
-        return !nodes.isNullOrEmpty()
-    }
+    private fun hasNodeByText(root: AccessibilityNodeInfo, text: String): Boolean = !root.findAccessibilityNodeInfosByText(text).isNullOrEmpty()
 
     override fun onInterrupt() {}
 }
