@@ -42,6 +42,11 @@ class BlockerService : AccessibilityService() {
                     executeImmediateBlock(pkg)
                 }
             }
+            pkg == "com.snapchat.android" -> {
+                if (isSnapchatSpotlight(root)) {
+                    executeImmediateBlock(pkg)
+                }
+            }
             isKnownBrowser(pkg) -> {
                 if (isBrowserShorts(root, pkg)) {
                     executeImmediateBlock(pkg)
@@ -91,6 +96,16 @@ class BlockerService : AccessibilityService() {
             "com.instagram.android:id/clips_video_container"
         )
         return hasNodeByAnyId(root, reelsIds) || hasNodeByText(root, "Reels")
+    }
+
+    private fun isSnapchatSpotlight(root: AccessibilityNodeInfo): Boolean {
+        // Spotlight typically has a "Spotlight" label or specific vertical pager IDs
+        val spotlightIds = listOf(
+            "com.snapchat.android:id/spotlight_tab_container",
+            "com.snapchat.android:id/spotlight_vertical_pager"
+        )
+        // We look for "Spotlight" text but must ensure it's not just the bottom navigation tab label
+        return hasNodeByAnyId(root, spotlightIds) || (hasNodeByText(root, "Spotlight") && !hasNodeByText(root, "Chat"))
     }
 
     private fun isBrowserShorts(root: AccessibilityNodeInfo, pkg: String): Boolean {

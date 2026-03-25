@@ -11,8 +11,8 @@ android {
         applicationId = "com.naman.brainback"
         minSdk = 27
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "5.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -52,6 +52,7 @@ dependencies {
     
     // YCharts for Pie & Bar Data Visualization
     implementation("co.yml:ycharts:2.1.0")
+    implementation("androidx.glance:glance-appwidget:1.0.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

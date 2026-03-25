@@ -1,13 +1,12 @@
-// Brainback: YouTube De-clutter Logic
-// Target: Shorts and Distractions
+// Brainback: YouTube De-clutter Logic (Fixed Runtime)
 
 const blockList = [
     '#shorts-container', 
-    'ytd-rich-section-renderer', // Homepage "Shorts" shelf
-    'ytd-reel-shelf-renderer',   // Sidebar/search "Shorts" shelf
-    'a[href^="/shorts"]',        // Any direct link to shorts
-    '#related',                  // Sidebar recommendations
-    '#comments'                  // Optional: Hide comments if requested
+    'ytd-rich-section-renderer', 
+    'ytd-reel-shelf-renderer',   
+    'a[href^="/shorts"]',        
+    '#related',                  
+    '#comments'                  
 ];
 
 function declutter() {
@@ -18,7 +17,6 @@ function declutter() {
         });
     });
 
-    // Specific logic for YouTube homepage feed
     const items = document.querySelectorAll('ytd-rich-item-renderer');
     items.forEach(item => {
         if (item.innerText.includes('Shorts')) {
@@ -27,14 +25,24 @@ function declutter() {
     });
 }
 
-// Persistent observer to handle server-driven UI updates
-const observer = new MutationObserver((mutations) => {
-    declutter();
-});
+// CodeRabbit Fix: Wait for body to be ready
+function startObserver() {
+    if (!document.body) {
+        window.requestAnimationFrame(startObserver);
+        return;
+    }
 
-observer.observe(document.body, {
-    childList: true,
-    subtree: true
-});
+    const observer = new MutationObserver((mutations) => {
+        declutter();
+    });
 
-console.log("Brainback Extension: Active and De-cluttering...");
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+    
+    declutter(); // Initial run
+}
+
+startObserver();
+console.log("Brainback Extension: Hardened Runtime Active.");

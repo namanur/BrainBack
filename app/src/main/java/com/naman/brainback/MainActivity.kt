@@ -31,13 +31,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
                 background = Color(0xFF000000),
                 surface = Color(0xFF111111),
                 primary = Color(0xFFFFFFFF),
-                secondary = Color(0xFFBBBBBB) // Increased contrast for secondary elements
+                secondary = Color(0xFFBBBBBB)
             ),
             content = content
         )
@@ -78,31 +78,43 @@ class MainActivity : ComponentActivity() {
     fun DashboardScreen() {
         val isServiceEnabled = isAccessibilityServiceEnabled()
         val prefs = getSharedPreferences("brainback_stats", Context.MODE_PRIVATE)
-        val discoveredBrowsers = remember { getInstalledBrowsers() }
+        val monitoredBrowsers = remember { getMonitoredBrowsers() }
 
         var showMenu by remember { mutableStateOf(false) }
         var showPrivacyDialog by remember { mutableStateOf(false) }
         var showAIDialog by remember { mutableStateOf(false) }
+        var showLockWarning by remember { mutableStateOf(false) } // NEW: Warning Dialog State
+        var unlockInput by remember { mutableStateOf("") }
 
+        // State-driven lock tracking
         var remainingMillis by remember { mutableStateOf(frictionManager.getRemainingMillis()) }
-        val isLocked = frictionManager.isLocked()
+        var isLocked by remember { mutableStateOf(frictionManager.isLocked()) }
+        var activeQuote by remember { mutableStateOf(frictionManager.getQuoteIfExpired()) }
 
-        LaunchedEffect(isLocked) {
+        LaunchedEffect(isLocked, activeQuote) {
             while (frictionManager.isLocked()) {
                 delay(1000)
                 remainingMillis = frictionManager.getRemainingMillis()
             }
+            // Transition to Quote phase once timer ends
+            isLocked = false
+            activeQuote = frictionManager.getQuoteIfExpired()
         }
 
         val totalBlocks = prefs.getInt("total_blocks", 0)
-        val ytBlocks = prefs.getInt("block_count_com.google.android.youtube", 0)
-        val igBlocks = prefs.getInt("block_count_com.instagram.android", 0)
         
-        var totalBrowserBlocks = 0
-        discoveredBrowsers.forEach { pkg ->
-            totalBrowserBlocks += prefs.getInt("block_count_$pkg", 0)
-        }
-        
+        val appUsageList = listOf(
+            AppUsage("YouTube", prefs.getInt("block_count_com.google.android.youtube", 0), Color.White),
+            AppUsage("Instagram", prefs.getInt("block_count_com.instagram.android", 0), Color(0xFFBBBBBB)),
+            AppUsage("Snapchat", prefs.getInt("block_count_com.snapchat.android", 0), Color(0xFF888888))
+        ).filter { it.blocks > 0 }
+
+        var browserBlockTotal = 0
+        monitoredBrowsers.forEach { pkg -> browserBlockTotal += prefs.getInt("block_count_$pkg", 0) }
+        val finalUsageList = if (browserBlockTotal > 0) {
+            appUsageList + AppUsage("Browsers", browserBlockTotal, Color(0xFF444444))
+        } else appUsageList
+
         Scaffold(
             topBar = {
                 CenterAlignedTopAppBar(
@@ -130,7 +142,7 @@ class MainActivity : ComponentActivity() {
             Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp).verticalScroll(rememberScrollState())) {
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // STATUS CARD
+                // STATUS CARD (PRE-BREAK PROTOCOL)
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
                     shape = RoundedCornerShape(24.dp),
@@ -139,7 +151,7 @@ class MainActivity : ComponentActivity() {
                     Column(modifier = Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             if (isServiceEnabled) "SYSTEM PROTECTED" else "PROTECTION OFF",
-                            color = if (isServiceEnabled) Color.White else Color(0xFFBBBBBB), // Increased contrast
+                            color = if (isServiceEnabled) Color.White else Color(0xFFBBBBBB),
                             fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp
                         )
                         Spacer(modifier = Modifier.height(20.dp))
@@ -147,20 +159,59 @@ class MainActivity : ComponentActivity() {
                         if (isLocked) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin, fontFamily = FontFamily.Monospace)
-                                Text("LOCK SEQUENCE ACTIVE", color = Color(0xFF888888), fontSize = 9.sp, letterSpacing = 1.sp)
+                                Text("PRE-BREAK COOLDOWN", color = Color(0xFF888888), fontSize = 9.sp, letterSpacing = 1.sp)
+                            }
+                        } else if (activeQuote != null) {
+                            // ENFORCED TYPING CHALLENGE (Anti-Cheat)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("INTENT CHALLENGE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    "Type this quote exactly to unlock:", 
+                                    color = Color(0xFF888888), 
+                                    fontSize = 10.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                // Removed SelectionContainer to prevent copy-paste
+                                Text(
+                                    activeQuote!!, 
+                                    color = Color.White, 
+                                    fontSize = 16.sp, 
+                                    fontWeight = FontWeight.Light, 
+                                    fontFamily = FontFamily.Serif,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                                Spacer(modifier = Modifier.height(20.dp))
+                                OutlinedTextField(
+                                    value = unlockInput,
+                                    onValueChange = { unlockInput = it },
+                                    label = { Text("Manual Entry Required", fontSize = 10.sp) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(
+                                    onClick = { 
+                                        if (frictionManager.unlock(unlockInput)) { 
+                                            activeQuote = null
+                                            unlockInput = "" 
+                                        } 
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) { Text("VERIFY INTENT") }
                             }
                         } else {
                             Button(
-                                onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                                onClick = { showLockWarning = true }, // Trigger Warning Pop-up
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                                 shape = RoundedCornerShape(32.dp),
                                 modifier = Modifier.fillMaxWidth().height(56.dp)
-                            ) { Text("MANAGE SERVICE", fontWeight = FontWeight.Bold) }
-                            
-                            Spacer(modifier = Modifier.height(12.dp))
-                            TextButton(onClick = { frictionManager.startLock() }) {
-                                Text("START 30M FOCUS LOCK", color = Color(0xFFBBBBBB), fontSize = 11.sp)
-                            }
+                            ) { Text("REQUEST BREAK (30M)", fontWeight = FontWeight.Bold) }
                         }
                     }
                 }
@@ -168,7 +219,7 @@ class MainActivity : ComponentActivity() {
                 Row(modifier = Modifier.fillMaxWidth()) {
                     MonochromeStat("SAVED", totalBlocks.toString(), Modifier.weight(1f))
                     Spacer(modifier = Modifier.width(16.dp))
-                    MonochromeStat("FOCUS", formatMillis(statsManager.getTotalScreenTimeToday()), Modifier.weight(1f).clickable {
+                    MonochromeStat("TOTAL USAGE", formatMillis(statsManager.getTotalScreenTimeToday()), Modifier.weight(1f).clickable {
                         val intent = Intent().apply {
                             setClassName("com.google.android.apps.wellbeing", "com.google.android.apps.wellbeing.settings.TopLevelSettingsActivity")
                         }
@@ -177,44 +228,25 @@ class MainActivity : ComponentActivity() {
                     })
                 }
                 
-                Spacer(modifier = Modifier.height(56.dp))
-                Text("DISTRACTION LOG", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
-                    Box(modifier = Modifier.size(180.dp), contentAlignment = Alignment.Center) {
-                        MonochromeCinematicPie(ytBlocks, igBlocks, totalBrowserBlocks)
+                if (finalUsageList.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(56.dp))
+                    Text("DISTRACTION LOG", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
+                        Box(modifier = Modifier.size(180.dp), contentAlignment = Alignment.Center) {
+                            MonochromeCinematicPie(finalUsageList)
+                        }
                     }
-                }
-
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    MonochromeBar("YouTube", ytBlocks, Color.White)
-                    MonochromeBar("Instagram", igBlocks, Color(0xFFBBBBBB)) // Increased contrast
-                    MonochromeBar("Browsers", totalBrowserBlocks, Color(0xFF666666)) // Increased contrast
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    // READABLE Dynamic Defense text
-                    Text(
-                        "Dynamic Defense: ${discoveredBrowsers.size} local sources identified.", 
-                        color = Color(0xFFBBBBBB), // High contrast readable text
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        finalUsageList.forEach { app ->
+                            MonochromeBar(app.label, app.blocks, app.color)
+                        }
+                    }
                 }
                 
                 Spacer(modifier = Modifier.height(80.dp))
-                
-                // MINIMAL FOOTER: Faded logo + quote only
-                Row(
-                    modifier = Modifier.align(Alignment.CenterHorizontally).alpha(0.3f), // Very faded
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.align(Alignment.CenterHorizontally).alpha(0.3f), verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.size(16.dp).clip(CircleShape)) {
-                        Image(
-                            painter = painterResource(id = R.drawable.logo),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp), // Cropped minimal brain
-                            contentScale = ContentScale.Crop
-                        )
+                        Image(painter = painterResource(id = R.drawable.logo), contentDescription = null, modifier = Modifier.size(24.dp), contentScale = ContentScale.Crop)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Be back in your brain.", color = Color.White, fontSize = 11.sp, letterSpacing = 1.sp, fontFamily = FontFamily.Serif)
@@ -223,13 +255,42 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Pop-ups
+        // PRE-LOCK WARNING DIALOG (Transparency Layer)
+        if (showLockWarning) {
+            AlertDialog(
+                onDismissRequest = { showLockWarning = false },
+                containerColor = Color(0xFF111111),
+                shape = RoundedCornerShape(24.dp),
+                title = { Text("Commit to Focus?", color = Color.White) },
+                text = { 
+                    Text(
+                        "You are about to enter a 30-minute lock. The 'Manage' button will disappear. You cannot turn off the firewall until the timer ends AND you manually type a focus quote. Are you sure?",
+                        color = Color(0xFFBBBBBB)
+                    ) 
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { 
+                            showLockWarning = false
+                            frictionManager.startLock(30)
+                            isLocked = true 
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                    ) { Text("I COMMIT") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLockWarning = false }) { Text("CANCEL", color = Color.White) }
+                }
+            )
+        }
+
+        // Other Dialogs
         if (showAIDialog) {
             AlertDialog(onDismissRequest = { showAIDialog = false }, containerColor = Color(0xFF111111), shape = RoundedCornerShape(24.dp),
                 title = { Text("Share & AI Analysis", color = Color.White) },
-                text = { Text("Brainback will generate a local JSON file. You are in full control—you can review this data before sharing it with any AI. No data is stored on our servers.", color = Color(0xFFBBBBBB)) },
+                text = { Text("Brainback generates a local JSON file. You are in control of your data.", color = Color(0xFFBBBBBB)) },
                 confirmButton = {
-                    Button(onClick = { showAIDialog = false; shareDataWithAI(totalBlocks, ytBlocks, igBlocks, totalBrowserBlocks) }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) { Text("SHARE") }
+                    Button(onClick = { showAIDialog = false; shareDataWithAI(totalBlocks, finalUsageList) }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) { Text("SHARE") }
                 }
             )
         }
@@ -237,22 +298,26 @@ class MainActivity : ComponentActivity() {
         if (showPrivacyDialog) {
             AlertDialog(onDismissRequest = { showPrivacyDialog = false }, containerColor = Color(0xFF111111), shape = RoundedCornerShape(24.dp),
                 title = { Text("TRUST & POWER", color = Color.White) },
-                text = { Text("100% LOCAL: All data stays on this device.\n\nBATTERY POSITIVE: Reducing short-form video saves more power than this firewall consumes.", color = Color(0xFFBBBBBB)) },
+                text = { Text("100% LOCAL: Your data never leaves this device.", color = Color(0xFFBBBBBB)) },
                 confirmButton = { TextButton(onClick = { showPrivacyDialog = false }) { Text("OK", color = Color.White) } }
             )
         }
     }
 
-    private fun getInstalledBrowsers(): List<String> {
+    data class AppUsage(val label: String, val blocks: Int, val color: Color)
+
+    private fun getMonitoredBrowsers(): List<String> {
+        val knownMonitored = listOf("com.android.chrome", "com.brave.browser", "org.mozilla.firefox")
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
-        val resolveInfos = packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-        return resolveInfos.map { it.activityInfo.packageName }.distinct()
+        return packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+            .map { it.activityInfo.packageName }
+            .filter { knownMonitored.contains(it) }.distinct()
     }
 
     @Composable
     fun MonochromeStat(label: String, value: String, modifier: Modifier = Modifier) {
         Column(modifier = modifier, horizontalAlignment = Alignment.Start) {
-            Text(label, color = Color(0xFFBBBBBB), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp) // Increased contrast
+            Text(label, color = Color(0xFFBBBBBB), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             Text(value, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Thin, fontFamily = FontFamily.Serif)
         }
     }
@@ -262,46 +327,40 @@ class MainActivity : ComponentActivity() {
         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(label.uppercase(), color = Color.White, fontSize = 10.sp, letterSpacing = 1.sp)
-                Text(count.toString(), color = Color(0xFFBBBBBB), fontSize = 10.sp) // Increased contrast
+                Text(count.toString(), color = Color(0xFFBBBBBB), fontSize = 10.sp)
             }
             Spacer(modifier = Modifier.height(6.dp))
-            val fraction = if (count > 0) minOf(count / 20f, 1f) else 0.01f
             Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF1A1A1A), RoundedCornerShape(1.dp))) {
-                Box(modifier = Modifier.fillMaxWidth(fraction).height(2.dp).background(color, RoundedCornerShape(1.dp)))
+                Box(modifier = Modifier.fillMaxWidth(if (count > 0) minOf(count / 20f, 1f) else 0.01f).height(2.dp).background(color, RoundedCornerShape(1.dp)))
             }
         }
     }
 
     @Composable
-    fun MonochromeCinematicPie(yt: Int, ig: Int, browser: Int) {
-        val total = (yt + ig + browser).toFloat().coerceAtLeast(1f)
-        val ytSweep = (yt / total) * 360f
-        val igSweep = (ig / total) * 360f
-        val browserSweep = (browser / total) * 360f
-
-        val infiniteTransition = rememberInfiniteTransition(label = "Rotation")
-        val rotation by infiniteTransition.animateFloat(
+    fun MonochromeCinematicPie(usageList: List<AppUsage>) {
+        val total = usageList.sumOf { it.blocks }.toFloat().coerceAtLeast(1f)
+        val rotation by rememberInfiniteTransition().animateFloat(
             initialValue = 0f, targetValue = 360f,
             animationSpec = infiniteRepeatable(animation = tween(40000, easing = LinearEasing), repeatMode = RepeatMode.Restart),
             label = "Rotation"
         )
-
         Canvas(modifier = Modifier.size(180.dp).rotate(rotation)) {
-            drawArc(color = Color.White, startAngle = 0f, sweepAngle = ytSweep, useCenter = false, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-            drawArc(color = Color(0xFFBBBBBB), startAngle = ytSweep, sweepAngle = igSweep, useCenter = false, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-            drawArc(color = Color(0xFF444444), startAngle = ytSweep + igSweep, sweepAngle = browserSweep, useCenter = false, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+            var currentStartAngle = 0f
+            usageList.forEach { app ->
+                val sweep = (app.blocks / total) * 360f
+                drawArc(color = app.color, startAngle = currentStartAngle, sweepAngle = sweep, useCenter = false, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+                currentStartAngle += sweep
+            }
         }
     }
 
-    private fun shareDataWithAI(total: Int, yt: Int, ig: Int, browser: Int) {
+    private fun shareDataWithAI(total: Int, usageList: List<AppUsage>) {
         val json = JSONObject().apply {
             put("brand", "Brainback")
             put("stats", JSONObject().apply {
                 put("total_interventions", total)
-                put("youtube", yt)
-                put("instagram", ig)
-                put("browsers", browser)
-                put("focus_time", formatMillis(statsManager.getTotalScreenTimeToday()))
+                usageList.forEach { put(it.label.lowercase(), it.blocks) }
+                put("uptime", formatMillis(statsManager.getTotalScreenTimeToday()))
             })
         }
         val intent = Intent(Intent.ACTION_SEND).apply {
