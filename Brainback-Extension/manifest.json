@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Brainback: YouTube De-clutter",
-  "version": "1.6",
+  "version": "1.7",
   "description": "An attention firewall for your browser. Removes Shorts and distracting recommendations from YouTube on Desktop and Android.",
   "icons": {
     "16": "icons/icon16.png",
@@ -14,7 +14,8 @@
       "id": "brainback-attention-firewall@naman.dev",
       "strict_min_version": "142.0",
       "data_collection_permissions": {
-        "required": ["policy"]
+        "required": ["none"],
+        "optional": []
       }
     }
   },
