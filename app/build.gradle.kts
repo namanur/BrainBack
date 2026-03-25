@@ -11,8 +11,8 @@ android {
         applicationId = "com.naman.brainback"
         minSdk = 27
         targetSdk = 35
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "7.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

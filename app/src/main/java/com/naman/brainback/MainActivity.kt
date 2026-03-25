@@ -1,5 +1,7 @@
 package com.naman.brainback
 
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -132,7 +134,6 @@ class MainActivity : ComponentActivity() {
             Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp).verticalScroll(rememberScrollState())) {
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // VALIDATED STATUS CARD
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
                     shape = RoundedCornerShape(24.dp),
@@ -155,14 +156,11 @@ class MainActivity : ComponentActivity() {
                         } else {
                             Text("SYSTEM ARMED", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                             Spacer(modifier = Modifier.height(20.dp))
-                            // THE GATEKEEPER TRIGGER
                             Button(
                                 onClick = { onNavigateToPreflight() },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                                 modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("REQUEST UNLOCK")
-                            }
+                            ) { Text("REQUEST UNLOCK") }
                         }
                     }
                 }
@@ -188,13 +186,21 @@ class MainActivity : ComponentActivity() {
         val isAccessibilityOk = validator.hasAccessibilityService()
         val isStatsOk = validator.hasUsageStatsPermission()
         val isOverlayOk = validator.canDrawOverlays()
+        val isAdminOk = validator.isDeviceAdmin()
         val isSystemReady = validator.isSystemReady()
 
         Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(28.dp).verticalScroll(rememberScrollState())) {
             Text("Pre-Lock Validation", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 32.dp))
-            Text("The system must be fully validated before a lock can be executed.", color = Color.Gray, fontSize = 14.sp)
+            Text("The system must be fully validated to enable Anti-Uninstall protection.", color = Color.Gray, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(32.dp))
 
+            PreflightItem("Fortress Admin", "Prevents uninstallation.", isAdminOk) {
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ComponentName(this@MainActivity, AdminReceiver::class.java))
+                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "This permission allows Brainback to prevent impulsive uninstallation during lock periods.")
+                }
+                startActivity(intent)
+            }
             PreflightItem("Accessibility", "Used to detect Shorts.", isAccessibilityOk) {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
@@ -207,18 +213,12 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // HARD ENFORCEMENT: COMMIT IS DISABLED UNTIL READY
             Button(
-                onClick = { 
-                    frictionManager.startLock(30)
-                    onBack() 
-                },
+                onClick = { frictionManager.startLock(30); onBack() },
                 enabled = isSystemReady,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
                 modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) {
-                Text(if (isSystemReady) "COMMIT TO 30M LOCK" else "SYSTEM NOT VALIDATED")
-            }
+            ) { Text(if (isSystemReady) "COMMIT TO 30M LOCK" else "VALIDATION REQUIRED") }
             
             TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 16.dp)) {
                 Text("CANCEL", color = Color.Gray)
@@ -228,10 +228,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun PreflightItem(name: String, desc: String, ok: Boolean, onFix: () -> Unit) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
-            modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth()
-        ) {
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)), modifier = Modifier.padding(vertical = 8.dp).fillMaxWidth()) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (ok) Icons.Default.CheckCircle else Icons.Default.Warning, contentDescription = null, tint = if (ok) Color.Green else Color.Red)
                 Spacer(modifier = Modifier.width(16.dp))
@@ -239,9 +236,7 @@ class MainActivity : ComponentActivity() {
                     Text(name, color = Color.White, fontWeight = FontWeight.Bold)
                     Text(desc, color = Color.Gray, fontSize = 11.sp)
                 }
-                if (!ok) {
-                    TextButton(onClick = onFix) { Text("FIX", color = Color.White) }
-                }
+                if (!ok) { TextButton(onClick = onFix) { Text("FIX", color = Color.White) } }
             }
         }
     }
@@ -253,34 +248,6 @@ class MainActivity : ComponentActivity() {
         Column(modifier = modifier, horizontalAlignment = Alignment.Start) {
             Text(label, color = Color(0xFFBBBBBB), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
             Text(value, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Thin, fontFamily = FontFamily.Serif)
-        }
-    }
-
-    @Composable
-    fun MonochromeBar(label: String, count: Int, color: Color) {
-        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(label.uppercase(), color = Color.White, fontSize = 10.sp, letterSpacing = 1.sp)
-                Text(count.toString(), color = Color(0xFFBBBBBB), fontSize = 10.sp)
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF1A1A1A), RoundedCornerShape(1.dp))) {
-                Box(modifier = Modifier.fillMaxWidth(if (count > 0) minOf(count / 20f, 1f) else 0.01f).height(2.dp).background(color, RoundedCornerShape(1.dp)))
-            }
-        }
-    }
-
-    @Composable
-    fun MonochromeCinematicPie(usageList: List<AppUsage>) {
-        val total = usageList.sumOf { it.blocks }.toFloat().coerceAtLeast(1f)
-        val rotation by rememberInfiniteTransition().animateFloat(initialValue = 0f, targetValue = 360f, animationSpec = infiniteRepeatable(animation = tween(40000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "Rotation")
-        Canvas(modifier = Modifier.size(180.dp).rotate(rotation)) {
-            var currentStartAngle = 0f
-            usageList.forEach { app ->
-                val sweep = (app.blocks / total) * 360f
-                drawArc(color = app.color, startAngle = currentStartAngle, sweepAngle = sweep, useCenter = false, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
-                currentStartAngle += sweep
-            }
         }
     }
 
