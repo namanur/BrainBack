@@ -53,6 +53,12 @@ dependencies {
     // YCharts for Pie & Bar Data Visualization
     implementation("co.yml:ycharts:2.1.0")
     implementation("androidx.glance:glance-appwidget:1.0.0")
+    implementation("androidx.room:room-runtime:2.6.1")
+    annotationProcessor("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    implementation("com.patrykandpatrick.vico:compose:1.14.0")
+    implementation("com.patrykandpatrick.vico:compose-m3:1.14.0")
+    implementation("com.patrykandpatrick.vico:core:1.14.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

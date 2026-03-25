@@ -1,7 +1,5 @@
 package com.naman.brainback
 
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -9,6 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -41,13 +40,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.naman.brainback.ui.WeeklyPerformanceScreen
+import com.naman.brainback.ui.WeeklyPerformanceViewModel
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : ComponentActivity() {
+
+    data class AppUsage(val label: String, val blocks: Int, val color: Color)
 
     private lateinit var statsManager: StatsManager
     private lateinit var frictionManager: FrictionManager
     private lateinit var validator: LockValidator
+    private val weeklyViewModel: WeeklyPerformanceViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,16 +87,26 @@ class MainActivity : ComponentActivity() {
     fun MainNavigation() {
         var currentScreen by remember { mutableStateOf("dashboard") }
         
-        when (currentScreen) {
-            "dashboard" -> DashboardScreen(onNavigateToPreflight = { currentScreen = "preflight" })
-            "preflight" -> PreflightScreen(onBack = { currentScreen = "dashboard" })
+        AnimatedContent(targetState = currentScreen, label = "ScreenTransition") { screen ->
+            when (screen) {
+                "dashboard" -> DashboardScreen(
+                    onNavigateToPreflight = { currentScreen = "preflight" },
+                    onNavigateToWeekly = { currentScreen = "weekly" }
+                )
+                "preflight" -> PreflightScreen(onBack = { currentScreen = "dashboard" })
+                "weekly" -> WeeklyPerformanceScreen(
+                    viewModel = weeklyViewModel,
+                    onBack = { currentScreen = "dashboard" }
+                )
+            }
         }
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun DashboardScreen(onNavigateToPreflight: () -> Unit) {
-        val prefs = getSharedPreferences("brainback_stats", Context.MODE_PRIVATE)
+    fun DashboardScreen(onNavigateToPreflight: () -> Unit, onNavigateToWeekly: () -> Unit) {
+        val prefs = getSharedPreferences("brainback_prefs", Context.MODE_PRIVATE)
+        val statsPrefs = getSharedPreferences("brainback_stats", Context.MODE_PRIVATE)
         val monitoredBrowsers = remember { getMonitoredBrowsers() }
 
         var showMenu by remember { mutableStateOf(false) }
@@ -97,6 +115,9 @@ class MainActivity : ComponentActivity() {
         var isOnBreak by remember { mutableStateOf(frictionManager.isOnBreak()) }
         var expiredQuote by remember { mutableStateOf(frictionManager.getQuoteIfExpired()) }
         var unlockInput by remember { mutableStateOf("") }
+        
+        // Firewall Toggle State
+        var isBlockingActive by remember { mutableStateOf(frictionManager.isBlockingActive()) }
 
         LaunchedEffect(isLocked, isOnBreak) {
             while (frictionManager.getRemainingMillis() > 0) {
@@ -123,7 +144,12 @@ class MainActivity : ComponentActivity() {
                     actions = {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.Menu, contentDescription = "Menu", tint = Color.White) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(Color(0xFF111111))) {
-                            DropdownMenuItem(text = { Text("Transparency", color = Color.White) }, onClick = { showMenu = false; onNavigateToPreflight() })
+                            DropdownMenuItem(text = { Text("Weekly Performance", color = Color.White) }, onClick = { showMenu = false; onNavigateToWeekly() })
+                            DropdownMenuItem(text = { Text("Share & AI (v2)", color = Color.White) }, onClick = { 
+                                showMenu = false
+                                shareDataWithAIV2()
+                            })
+                            DropdownMenuItem(text = { Text("Pre-Lock Checklist", color = Color.White) }, onClick = { showMenu = false; onNavigateToPreflight() })
                         }
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Black)
@@ -134,6 +160,36 @@ class MainActivity : ComponentActivity() {
             Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp).verticalScroll(rememberScrollState())) {
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // 1. FIREWALL TOGGLE (Bug Fix 2)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(20.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("FIREWALL", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text(if (isBlockingActive) "ACTIVE" else "OFF", color = if (isBlockingActive) Color.Green else Color.Red, fontSize = 10.sp)
+                        }
+                        Switch(
+                            checked = isBlockingActive,
+                            onCheckedChange = { 
+                                if (!isLocked) {
+                                    isBlockingActive = it
+                                    frictionManager.setBlockingActive(it)
+                                }
+                            },
+                            enabled = !isLocked, // Disable toggle during lock
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color.DarkGray)
+                        )
+                    }
+                }
+
+                // 2. LOCK STATUS CARD
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111111)),
                     shape = RoundedCornerShape(24.dp),
@@ -141,32 +197,44 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(modifier = Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         if (isOnBreak) {
-                            Text("BREAK WINDOW ACTIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text("BREAK WINDOW", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                             Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin)
                             Text("FIREWALL IS TEMPORARILY OFF", color = Color(0xFF444444), fontSize = 9.sp)
                         } else if (isLocked) {
                             Text("COOLDOWN ACTIVE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                             Text(formatMillisTimer(remainingMillis), color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Thin)
-                            Text("SYSTEM HARD-LOCKED", color = Color(0xFFB06161), fontSize = 9.sp)
+                            Text("SETTINGS HARD-LOCKED", color = Color(0xFFB06161), fontSize = 9.sp)
                         } else if (expiredQuote != null) {
-                            Text("COOLDOWN COMPLETE", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("CHALLENGE PENDING", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Text(expiredQuote!!, color = Color.White, fontSize = 16.sp, fontFamily = FontFamily.Serif, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp))
                             OutlinedTextField(value = unlockInput, onValueChange = { unlockInput = it }, label = { Text("Type quote perfectly") }, modifier = Modifier.fillMaxWidth())
-                            Button(onClick = { if (frictionManager.unlock(unlockInput)) unlockInput = "" }, modifier = Modifier.padding(top = 12.dp)) { Text("TAKE BREAK") }
+                            Button(
+                                onClick = { 
+                                    if (frictionManager.unlock(unlockInput)) {
+                                        unlockInput = ""
+                                        isBlockingActive = false // Break starts, firewall turns off
+                                    } 
+                                }, 
+                                modifier = Modifier.padding(top = 12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                            ) { Text("VERIFY INTENT") }
                         } else {
-                            Text("SYSTEM ARMED", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text("SYSTEM READY", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = { onNavigateToPreflight() },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("REQUEST UNLOCK") }
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                shape = RoundedCornerShape(28.dp)
+                            ) {
+                                Text("INITIATE HARD LOCK", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
 
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    MonochromeStat("SAVED", prefs.getInt("total_blocks", 0).toString(), Modifier.weight(1f))
+                    MonochromeStat("SAVED", statsPrefs.getInt("total_blocks", 0).toString(), Modifier.weight(1f))
                     Spacer(modifier = Modifier.width(16.dp))
                     MonochromeStat("USAGE", formatMillis(statsManager.getTotalScreenTimeToday()), Modifier.weight(1f))
                 }
@@ -177,6 +245,7 @@ class MainActivity : ComponentActivity() {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Be back in your brain.", color = Color.White, fontSize = 11.sp, letterSpacing = 1.sp, fontFamily = FontFamily.Serif)
                 }
+                Spacer(modifier = Modifier.height(40.dp))
             }
         }
     }
@@ -191,23 +260,22 @@ class MainActivity : ComponentActivity() {
 
         Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(28.dp).verticalScroll(rememberScrollState())) {
             Text("Pre-Lock Validation", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 32.dp))
-            Text("The system must be fully validated to enable Anti-Uninstall protection.", color = Color.Gray, fontSize = 14.sp)
+            Text("All requirements must be met to enable self-defense.", color = Color.Gray, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(32.dp))
 
             PreflightItem("Fortress Admin", "Prevents uninstallation.", isAdminOk) {
-                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ComponentName(this@MainActivity, AdminReceiver::class.java))
-                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "This permission allows Brainback to prevent impulsive uninstallation during lock periods.")
+                val intent = Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, android.content.ComponentName(this@MainActivity, AdminReceiver::class.java))
                 }
                 startActivity(intent)
             }
-            PreflightItem("Accessibility", "Used to detect Shorts.", isAccessibilityOk) {
+            PreflightItem("Accessibility", "Detects Shorts.", isAccessibilityOk) {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
-            PreflightItem("Usage Stats", "Used to track progress.", isStatsOk) {
+            PreflightItem("Usage Stats", "Tracks progress.", isStatsOk) {
                 startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
             }
-            PreflightItem("Overlays", "Used for self-preservation.", isOverlayOk) {
+            PreflightItem("Overlays", "Self-preservation.", isOverlayOk) {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
 
@@ -217,7 +285,8 @@ class MainActivity : ComponentActivity() {
                 onClick = { frictionManager.startLock(30); onBack() },
                 enabled = isSystemReady,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                modifier = Modifier.fillMaxWidth().height(56.dp)
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(28.dp)
             ) { Text(if (isSystemReady) "COMMIT TO 30M LOCK" else "VALIDATION REQUIRED") }
             
             TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 16.dp)) {
@@ -251,6 +320,64 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun shareDataWithAIV2() {
+        val uiState = weeklyViewModel.uiState.value
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        val json = JSONObject().apply {
+            put("export_version", 2)
+            put("generated_at", dateFormat.format(Date()))
+            
+            put("brainback_impact", JSONObject().apply {
+                put("total_blocks_this_week", uiState.totalBlocks)
+                put("estimated_minutes_saved", uiState.totalBlocks * 4)
+            })
+
+            val blockedApps = JSONArray()
+            uiState.appBreakdown.forEach {
+                blockedApps.put(JSONObject().apply {
+                    put("app", it.appLabel)
+                    put("count", it.count)
+                })
+            }
+            put("most_blocked_apps", blockedApps)
+
+            val screenTime = JSONArray()
+            uiState.dailyScreenTime.forEach {
+                screenTime.put(JSONObject().apply {
+                    put("date", dateFormat.format(Date(it.day)))
+                    put("total_minutes", it.totalTimeMillis / (1000 * 60))
+                })
+            }
+            put("screen_time_daily", screenTime)
+
+            val unlocks = JSONArray()
+            uiState.dailyUnlocks.forEach {
+                unlocks.put(JSONObject().apply {
+                    put("date", dateFormat.format(Date(it.day)))
+                    put("count", it.count)
+                })
+            }
+            put("unlocks_daily", unlocks)
+
+            val pickups = JSONArray()
+            uiState.firstPickups.forEach {
+                pickups.put(JSONObject().apply {
+                    put("date", dateFormat.format(Date(it.day)))
+                    put("time", timeFormat.format(Date(it.timestamp)))
+                })
+            }
+            put("first_pickup_times", pickups)
+        }
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, json.toString(4))
+        }
+        startActivity(Intent.createChooser(intent, "ANALYZE v2"))
+    }
+
     private fun formatMillis(millis: Long): String {
         val minutes = (millis / (1000 * 60)) % 60
         val hours = (millis / (1000 * 60 * 60))
@@ -275,5 +402,3 @@ class MainActivity : ComponentActivity() {
         return mode == android.app.AppOpsManager.MODE_ALLOWED
     }
 }
-
-data class AppUsage(val label: String, val blocks: Int, val color: Color)
